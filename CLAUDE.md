@@ -11,7 +11,7 @@ Current status lives in the vault note `План разработки`, not in t
 - Talk to the user in Russian.
 - Everything in the repository is in English: code, comments, MCP tool descriptions, commit messages, documentation, and all Claude configuration (`CLAUDE.md`, agents, settings).
 - Names we create inside Blender (objects, materials, collections, actions) are in English.
-- Designs in `designs/` are project output for the user, so their labels are in Russian.
+- Designs in `designs/` (briefs, part diagrams, notes) are in English too. The user asked for this on 2026-11-02.
 - Obsidian vault notes are in Russian.
 
 ## The user
