@@ -12,7 +12,7 @@ wheels/
 # macOS
 .DS_Store
 
-src/blender_mcp/config.py
+# src/blender_mcp/config.py is tracked in this fork: it holds no secrets and turns telemetry off.
 
 local_tests/
 /test_*.py
