@@ -2,7 +2,7 @@
 
 A fork of [mcp-for-blender](https://github.com/ahujasid/blender-mcp) (MIT) with our own tools and agents, so Claude can model, shade and animate in Blender 5.2 from a reference image, a drawing, or an idea.
 
-**First goal (proposed, not yet confirmed by the user):** Claude models one prop from a reference image, gives it materials and lighting, renders a turntable animation, and the user accepts the result from the renders.
+**First goal, reached on 2026-11-02:** Hornet from Hollow Knight: Silksong, modelled from the user's references, with materials, lighting and a static-camera wind animation, accepted by the user from the renders (`designs/hornet/`). Next: the same character in a vinyl-figurine style and a realistic style, and a base or diorama.
 
 Current status lives in the vault note `План разработки`, not in this file.
 
@@ -87,6 +87,7 @@ Run `uv` from the repository root.
 - The MCP server is started by Claude Code from `.mcp.json`: `uv run --frozen mcp-for-blender` with telemetry off. The desktop app loads it silently in a trusted folder, with no approval dialog, so the sign that it is up is `get_addon_status` answering, not a message. After a server change, reconnect it through `/mcp` or start a new session.
 - Deploy the addon and restart Blender: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-blender.ps1`. It checks `bpy.data.is_dirty` over the socket, closes Blender with `CloseMainWindow`, copies `addon.py` to the user addons folder as `blender_mcp.py`, starts Blender with `scripts\enable-addon.py`, which enables the addon and saves preferences, and waits for the socket. When no addon answers in a running Blender, it stops and asks the user to close Blender by hand, unless `-SkipDirtyCheck` is passed after the user confirmed nothing is unsaved.
 - Health check from Claude: `get_addon_status` returns the Blender version, the addon version and which libraries are on.
+- Final renders never go through the socket, because a Cycles render blocks the addon. Save the file, then run a background Blender from the repository root: `scripts\render-views.py` renders the brief's five views through `Cam_02_Hero` by rotating `Rig_Pivot`, plus the close-up camera; `scripts\render-animation.py` bakes every point cache (cloth), renders optional PNG stills and then the frame range to an H.264 MP4. Both take their arguments after `--`; see the docstrings. Example: `"D:\SteamLibrary\steamapps\common\Blender\blender.exe" -b "%USERPROFILE%\Documents\BlenderMCP\hornet.blend" -P scripts\render-animation.py -- designs\hornet\renders\out.mp4 128 1 stills:1,96,192`. Blender 5.x needs `image_settings.media_type = 'VIDEO'` before `file_format = 'FFMPEG'`; the scripts handle it. A saved file keeps the cloth setup but not the bake, so every animation render starts with a bake (about a minute for Hornet).
 
 ## Subagents
 
