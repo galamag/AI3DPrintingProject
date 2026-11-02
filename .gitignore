@@ -20,7 +20,7 @@ local_tests/
 
 supabase/
 
-scripts/
+# scripts/ holds our deploy scripts and is tracked (upstream ignored it).
 
 # Legacy PyPI shim — built and published separately, see runbook
 legacy-shim/
@@ -36,3 +36,15 @@ supabase/.temp/
 
 # Local eval harness (see evals/README.md)
 evals/
+
+# BlenderMCP additions
+# Blender files and renders live in %USERPROFILE%\Documents\BlenderMCP, not here
+*.blend
+*.blend1
+*.blend@
+
+# Local tool data
+.remember/
+.superpowers/
+.claude/settings.local.json
+.claude/worktrees/

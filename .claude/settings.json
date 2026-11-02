@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(uv run pytest)",
+      "Bash(uv run pytest *)",
+      "Bash(uv sync)",
+      "Bash(uv sync *)",
+      "PowerShell(uv run pytest)",
+      "PowerShell(uv run pytest *)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(rm *)",
+      "Bash(uv add *)",
+      "Bash(uv pip *)",
+      "Bash(pip install *)",
+      "Bash(winget *)",
+      "PowerShell(git push *)",
+      "PowerShell(git reset *)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(uv add *)",
+      "PowerShell(uv pip *)",
+      "PowerShell(pip install *)",
+      "PowerShell(winget *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(cat .env*)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push --force-with-lease *)",
+      "Bash(rm -rf *)",
+      "Bash(taskkill *)",
+      "PowerShell(git push --force *)",
+      "PowerShell(git push -f *)",
+      "PowerShell(git push --force-with-lease *)",
+      "PowerShell(Remove-Item -Recurse *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(taskkill *)"
+    ]
+  }
+}
