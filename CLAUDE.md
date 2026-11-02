@@ -84,7 +84,7 @@ Run `uv` from the repository root.
 
 - After a fresh clone: `uv sync --frozen`.
 - Unit tests: `uv run --with pytest pytest`. pytest is not in upstream's lock file, so `--with` adds it for the run. `tests/test_compat_matrix.py` reads old addons from git history, so it needs the full clone.
-- The MCP server is started by Claude Code from `.mcp.json`: `uv run --frozen mcp-for-blender` with telemetry off. After a server change, reconnect it through `/mcp` or start a new session.
+- The MCP server is started by Claude Code from `.mcp.json`: `uv run --frozen mcp-for-blender` with telemetry off. The desktop app loads it silently in a trusted folder, with no approval dialog, so the sign that it is up is `get_addon_status` answering, not a message. After a server change, reconnect it through `/mcp` or start a new session.
 - Deploy the addon and restart Blender: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-blender.ps1`. It checks `bpy.data.is_dirty` over the socket, closes Blender with `CloseMainWindow`, copies `addon.py` to the user addons folder as `blender_mcp.py`, starts Blender with `scripts\enable-addon.py`, which enables the addon and saves preferences, and waits for the socket. When no addon answers in a running Blender, it stops and asks the user to close Blender by hand, unless `-SkipDirtyCheck` is passed after the user confirmed nothing is unsaved.
 - Health check from Claude: `get_addon_status` returns the Blender version, the addon version and which libraries are on.
 
