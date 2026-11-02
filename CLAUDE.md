@@ -49,7 +49,7 @@ Full history: the `Журнал решений` note in the vault. Open question
    - `src/blender_mcp/safe_mode.py`
 
    A protocol change bumps `ADDON_PROTOCOL_VERSION` in `addon.py` and `EXPECTED_ADDON_PROTOCOL_VERSION` in `src/blender_mcp/addon_manager.py` together, and `tests/test_compat_matrix.py` must still pass.
-5. **Verify after changes.** Run `uv run pytest`, and exercise addon or tool changes in live Blender. If you cannot verify something, say so. Claude may restart Blender for this through `scripts\restart-blender.ps1`, which refuses to close a Blender with unsaved changes, and never by killing the process.
+5. **Verify after changes.** Run `uv run --with pytest pytest`, and exercise addon or tool changes in live Blender. If you cannot verify something, say so. Claude may restart Blender for this through `scripts\restart-blender.ps1`, which refuses to close a Blender with unsaved changes, and never by killing the process.
 6. **Install nothing without consent.** Keep dependencies to a minimum and prefer what Python and Blender already provide. Before adding a package, check the GitHub Advisory Database and make sure the version is at least 14 days old unless it is a security fix. Pin exact versions and commit `uv.lock`. Verify downloaded programs by hash from two official sources and by digital signature before running them.
 7. **Do not copy code from other projects.** Ideas only, and only with a checked license. Upstream is the one exception: it is this repository.
 
@@ -65,7 +65,7 @@ Full history: the `Журнал решений` note in the vault. Open question
 - Hand-built geometry needs `mesh.validate()` and `mesh.update()`. After `bmesh`, call `bm.to_mesh(mesh)` and `bm.free()`.
 - Blender's unit is the metre by default. Convert reference dimensions in millimetres and centimetres, and read `scene.unit_settings` before trusting a number.
 - Object and material names must be unique. Blender silently appends `.001`, so read the name back after creation and use the returned name.
-- Whether a script run through the socket makes one undo step is not verified yet. Save before a risky script, and record the answer in the vault once checked.
+- `bpy.data.is_dirty` stays `False` after a script creates objects and materials through `bpy.data` (seen on 5.2.3). So the restart script's dirty check protects the user's own edits, not the script's: save with `bpy.ops.wm.save_mainfile()` before any restart. Whether such a script makes an undo step is not verified yet.
 - The `Auto-Start Server` checkbox is a scene property, so a file saved with it off starts no server when opened.
 - When port 9876 is already taken, for example by a second Blender, auto-start is skipped with only a console message.
 - Closing Blender with unsaved changes opens a dialog that waits for a person. `scripts\restart-blender.ps1` asks `bpy.data.is_dirty` over the socket and refuses to close while it is true.
@@ -83,7 +83,7 @@ Full history: the `Журнал решений` note in the vault. Open question
 Run `uv` from the repository root.
 
 - After a fresh clone: `uv sync --frozen`.
-- Unit tests: `uv run pytest`. `tests/test_compat_matrix.py` reads old addons from git history, so it needs the full clone.
+- Unit tests: `uv run --with pytest pytest`. pytest is not in upstream's lock file, so `--with` adds it for the run. `tests/test_compat_matrix.py` reads old addons from git history, so it needs the full clone.
 - The MCP server is started by Claude Code from `.mcp.json`: `uv run --frozen mcp-for-blender` with telemetry off. After a server change, reconnect it through `/mcp` or start a new session.
 - Deploy the addon and restart Blender: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-blender.ps1`. It checks `bpy.data.is_dirty` over the socket, closes Blender with `CloseMainWindow`, copies `addon.py` to the user addons folder as `blender_mcp.py`, starts Blender with `scripts\enable-addon.py`, which enables the addon and saves preferences, and waits for the socket. When no addon answers in a running Blender, it stops and asks the user to close Blender by hand, unless `-SkipDirtyCheck` is passed after the user confirmed nothing is unsaved.
 - Health check from Claude: `get_addon_status` returns the Blender version, the addon version and which libraries are on.
