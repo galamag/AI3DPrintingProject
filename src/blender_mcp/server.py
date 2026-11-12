@@ -28,6 +28,7 @@ from .addon_manager import (
 from .consent_prompt import maybe_prompt_for_consent
 from .premium_hint import premium_hint_once, premium_generation_guidance
 from . import blender_scripts, context_log, generation
+from . import print_export  # fork addition: export_for_print
 from .safe_mode import safe_mode_enabled, validate_code, SandboxViolation, SAFE_MODE_ENV
 from .openai_apps import (
     APP_MIME_TYPE,
@@ -580,6 +581,9 @@ def _run_script(script: str, args: dict) -> dict:
     if not isinstance(result, dict) or "result" not in result:
         raise AddonTooOld(missing_feature("this view"))
     return blender_scripts.parse_result(result["result"])
+
+
+print_export.register(mcp, _run_script)  # fork addition: export_for_print
 
 
 def _format_scene_summary(data: dict, fields) -> str:
