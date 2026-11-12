@@ -37,12 +37,15 @@ def test_capture_has_the_window_size_and_real_content():
     window = next((w for w in WINDOWS if not w.minimized), None)
     if window is None:
         pytest.skip("every Bambu Studio window is minimized")
-    data, info = capture_window(hwnd=window.hwnd)
-    width, height, _, _ = read_png(data)
-    assert (width, height) == (window.width, window.height)
-    assert info["image_size"] == [window.width, window.height]
-
-    _, _, raw = Win32Backend().capture(window.hwnd)
+    raw_width, raw_height, raw = Win32Backend().capture(window.hwnd)
+    assert (raw_width, raw_height) == (window.width, window.height)
     step = 4 * 997
     colours = {raw[i:i + 3] for i in range(0, len(raw) - 3, step)}
     assert len(colours) > 1, "the capture is a single colour"
+
+    data, info = capture_window(hwnd=window.hwnd)
+    width, height, _, _ = read_png(data)
+    assert info["image_size"] == [width, height]
+    assert max(width, height) <= 1568 and width * height <= 1_150_000
+    assert info["scale_x"] == width / window.width
+    assert info["scale_y"] == height / window.height

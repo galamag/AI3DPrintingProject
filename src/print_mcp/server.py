@@ -153,10 +153,14 @@ async def studio_capture(
     """Capture a Bambu Studio window as a PNG, even when other windows cover it.
 
     Does not focus or move the window. `crop` is [left, top, right, bottom] in window
-    pixels and is applied before `scale` (0.1 to 1.0; 0.5 keeps a 2560 px window readable).
-    Returns the image and JSON with the window, the image size and `to_window_px`, the
-    formula that turns an image pixel into the window pixel studio_click expects. A
-    minimized window cannot be captured.
+    pixels and is applied before `scale` (0.1 to 1.0). The scale is lowered when needed so
+    the image stays within 1568 px and 1.15 MP; crop a region to read small text at full
+    size. Returns the image and JSON with the window (including its width and height),
+    `scale_x` and `scale_y` actually used, `to_window_px` (the formula from an image pixel
+    to the window pixel studio_click expects), `click_hint` (pass the window's width and
+    height to studio_click as expected_width and expected_height) and `warnings`, for
+    example when the window is disabled because a dialog is open. A minimized window
+    cannot be captured.
     """
     try:
         data, info = await asyncio.to_thread(
@@ -177,19 +181,34 @@ async def studio_click(
     y: int,
     hwnd: int | None = None,
     title_contains: str | None = None,
+    expected_width: int | None = None,
+    expected_height: int | None = None,
 ) -> str:
     """Left-click a point in a Bambu Studio window without focusing it or moving the mouse.
 
     Always call studio_capture first and take the point from that capture: (x, y) are
-    window pixels, so convert image pixels with its `to_window_px`. Never reuse old
-    coordinates; button positions depend on the window size and the Bambu Studio version.
-    Buttons that start, stop, pause, resume or cancel a print, including "Print plate" and
-    "Send" in whatever language the UI uses, may be clicked only after the user's explicit
-    consent to that particular print.
-    Capture again afterwards to check the effect. Returns the control that got the click
-    (`class_trail`) and whether the foreground window changed (`foreground_changed`).
+    window pixels, so convert image pixels with its `to_window_px`, and pass the captured
+    window's width and height as `expected_width` and `expected_height`; the click is
+    refused if the window size changed since. Never reuse old coordinates; button positions
+    depend on the window size and the Bambu Studio version.
+
+    Never click the window's close, minimize or maximize buttons. Buttons that start, stop,
+    pause, resume or cancel a print, including "Print plate" and "Send" in whatever language
+    the UI uses, may be clicked only after the user's explicit consent to that particular
+    print. A window blocked by a dialog is refused: list the windows and click the dialog by
+    its hwnd. Capture again afterwards to check the effect. Returns the window and its size,
+    the control that got the click (`class_trail`) and whether the foreground window changed
+    (`foreground_changed`).
     """
-    return await _run(studio.click_window, x, y, hwnd=hwnd, title_contains=title_contains)
+    return await _run(
+        studio.click_window,
+        x,
+        y,
+        hwnd=hwnd,
+        title_contains=title_contains,
+        expected_width=expected_width,
+        expected_height=expected_height,
+    )
 
 
 @mcp.tool()
@@ -197,8 +216,10 @@ async def studio_open(path: str, timeout: float = 60.0) -> str:
     """Show a .3mf, .gcode.3mf, .stl, .step, .stp or .obj file in Bambu Studio.
 
     If a Bambu Studio window is already titled with the file's project name, it is returned
-    and nothing is launched (`launched: false`). Otherwise Bambu Studio starts with the
-    file, asked not to take focus, and the call waits up to `timeout` seconds for its window.
+    and nothing is launched (`launched: false`). Matching is by file name only: a window for
+    a file with the same name in another folder counts as this file's. Otherwise Bambu
+    Studio starts with the file, asked not to take focus, and the call waits up to `timeout`
+    seconds for its window; while that launch is still starting, it is not repeated.
     The path must lie inside the repository, Documents/BlenderMCP or PRINT_MCP_WORK_DIR.
     Opening a sliced file does not keep its slice: the window slices again.
     """

@@ -29,6 +29,14 @@ def test_click_description_demands_a_capture_and_consent():
     text = click.description.lower()
     assert "studio_capture" in text
     assert "consent" in text
+    for button in ("close", "minimize", "maximize"):
+        assert button in text
+    assert {"expected_width", "expected_height"} <= set(click.inputSchema["properties"])
+
+
+def test_open_description_says_matching_is_by_file_name():
+    open_tool = next(tool for tool in _tools() if tool.name == "studio_open")
+    assert "file name only" in open_tool.description.lower()
 
 
 class _NoWindows:
