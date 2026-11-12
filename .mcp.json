@@ -6,6 +6,10 @@
       "env": {
         "DISABLE_TELEMETRY": "true"
       }
+    },
+    "print": {
+      "command": "uv",
+      "args": ["run", "--frozen", "python", "-m", "print_mcp.server"]
     }
   }
 }
