@@ -29,6 +29,7 @@ The user has never used Blender and approves the brief from your description and
 - Materials per part in plain words: colour, roughness, metal or not, any pattern or wear.
 - Lighting and camera for the presentation render: key light direction, background, camera angle, and which views to render.
 - Animation, when asked: what moves, how far, how fast, and the loop length.
+- Print, when the object is to be 3D printed: the printed size in millimetres, what the part is for and what load it carries, the colour from the filaments the orchestrator lists as loaded, which face sits on the bed, the tolerances of anything that must fit another part, and what may not be changed for printability. The printer is a Bambu Lab P2S: one part fits in 256 x 256 x 256 mm with a few millimetres of margin, one colour per plate. Design for printing from the start: a flat base, walls of at least 1.2 mm, no thin unsupported spikes, and surfaces that lean no more than 45 degrees away from vertical wherever the look allows.
 - Acceptance criteria: the five to ten checks the inspector will run, each one measurable or visible in a render.
 
 ## Rules
