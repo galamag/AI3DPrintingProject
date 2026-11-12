@@ -64,18 +64,25 @@ async def slice_model(
 ) -> str:
     """Slice a model with the Bambu Studio command line and inspect the result.
 
-    `model` is an .stl, .3mf, .step, .stp or .obj file; `output` must end with .gcode.3mf
-    and is replaced if it exists. Both must lie inside the repository,
-    Documents/BlenderMCP or PRINT_MCP_WORK_DIR. The plate picture is saved next to the
-    output as `<name>.png`. Profile names come from list_print_profiles.
+    `model` is an .stl, .3mf, .step, .stp or .obj file; `output` must end with .gcode.3mf.
+    Both must lie inside the repository, Documents/BlenderMCP or PRINT_MCP_WORK_DIR. Any
+    old `output` and its thumbnail are deleted first; the new slice is written there only
+    when every check passes, so a failed slice leaves no file at `output`. The plate
+    picture is saved next to it as `<name>.plate.png`. Only one plate is supported.
+
+    Profile names come from list_print_profiles. The process and filament must list the
+    machine in their compatible_printers; base and template profiles are refused.
 
     `overrides` changes process settings for this slice only, e.g.
-    {"sparse_infill_density": "30%"}; every key must exist in the process profile.
+    {"sparse_infill_density": "30%"}. Every key must exist in the process profile.
+    G-code, post-processing, file-name, temperature, compatibility and extruder-variant
+    keys cannot be overridden.
 
     Returns JSON: `ok`, `exit_code`, `error_string`, `output`, `result` (the CLI's
     result.json), `mismatches` (requested profile or bed settings the G-code does not
-    carry) and `summary` (time, layers, filament length and weight, key settings, thumbnail
-    path). This only slices; nothing is sent to the printer.
+    carry), `summary` (plates, time, layers, filament length and weight, key settings,
+    thumbnail path) and `cli_output` (tail of the CLI's stderr and stdout when `ok` is
+    false). This only slices; nothing is sent to the printer.
     """
     return await _run(
         slicer.slice_model,

@@ -87,8 +87,15 @@ def _read_index(base: Path) -> dict[str, dict[str, Path]] | None:
             if not isinstance(name, str) or not isinstance(sub_path, str):
                 continue
             parts = PurePosixPath(sub_path.replace("\\", "/")).parts
-            # Only files inside <base>/<kind>/: no absolute paths, no "..".
-            if len(parts) < 2 or parts[0] != kind or ".." in parts or not sub_path.endswith(".json"):
+            # Only files inside <base>/<kind>/: no absolute paths, no "..", and no ":" in any
+            # part, since joining "D:" onto a Windows path jumps to another drive.
+            if (
+                len(parts) < 2
+                or parts[0] != kind
+                or ".." in parts
+                or any(":" in part for part in parts)
+                or not sub_path.endswith(".json")
+            ):
                 continue
             entries[name] = base.joinpath(*parts)
         index[kind] = entries
@@ -109,14 +116,19 @@ class _Library:
         self.index = _read_index(self.base)
         self._files: dict[Path, dict] = {}
         self._resolved: dict[tuple[str, str], dict] = {}
+        self._checked: set[Path] = set()
 
     def path(self, kind: str, name: str) -> Path:
         _check_kind(kind)
         indexed = self.index is not None and isinstance(name, str) and name in self.index[kind]
         _check_name(name, indexed)
-        if indexed:
-            return self.index[kind][name]
-        return self.base / kind / f"{name}.json"
+        path = self.index[kind][name] if indexed else self.base / kind / f"{name}.json"
+        if path not in self._checked:
+            # Following links, the file must still sit inside <base>/<kind>/.
+            if not path.resolve().is_relative_to((self.base / kind).resolve()):
+                raise ValueError(f"{kind} profile {name!r} resolves outside {self.base / kind}")
+            self._checked.add(path)
+        return path
 
     def names(self, kind: str) -> list[str]:
         if self.index is not None:
@@ -168,6 +180,11 @@ def profile_path(kind: str, name: str, root: Path | None = None) -> Path:
     `root` defaults to the installed BBL profiles.
     """
     return _Library(root).path(kind, name)
+
+
+def raw_profile(kind: str, name: str, root: Path | None = None) -> dict:
+    """A copy of the profile file's own JSON, with nothing inherited or included."""
+    return dict(_Library(root).read(kind, name))
 
 
 def load_profile(kind: str, name: str, root: Path | None = None) -> dict:

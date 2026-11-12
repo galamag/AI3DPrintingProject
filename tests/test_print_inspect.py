@@ -60,6 +60,7 @@ def write_archive(
     bed="Textured PEI Plate",
     infill="20%",
     gcode=True,
+    plates=1,
 ):
     """Write a minimal sliced archive shaped like Bambu Studio's output."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +68,8 @@ def write_archive(
         if gcode:
             text = HEADER.format(weight=weight, machine=machine, process=process,
                                  filament=filament, bed=bed, infill=infill)
-            archive.writestr("Metadata/plate_1.gcode", text.replace("\n", "\r\n"))
+            for plate in range(1, plates + 1):
+                archive.writestr(f"Metadata/plate_{plate}.gcode", text.replace("\n", "\r\n"))
         archive.writestr("Metadata/slice_info.config", SLICE_INFO)
         archive.writestr("Metadata/plate_1.png", PNG_BYTES)
         archive.writestr("3D/3dmodel.model", "<model/>")
@@ -94,6 +96,12 @@ def test_reads_header_and_slice_info(sliced):
     assert info["filament_length_mm"] == 1270.15
     assert info["max_z_mm"] == 20.0
     assert info["thumbnail"] is None
+    assert info["plates"] == 1
+
+
+def test_counts_plates(tmp_path):
+    path = write_archive(tmp_path / "two.gcode.3mf", plates=2)
+    assert inspect_sliced(path)["plates"] == 2
 
 
 def test_settings_are_unquoted_and_complete(sliced):

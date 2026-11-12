@@ -93,7 +93,8 @@ def test_live_slice_of_a_20mm_cube(cube, tmp_path):
     # With flattened profiles the G-code carries the real density, so the header has the mass.
     assert summary["weight_source"] == "gcode"
     assert 3.5 <= summary["filament_weight_g"] <= 5.0
-    assert (out.parent / "куб 20.png").is_file()
+    assert (out.parent / "куб 20.plate.png").is_file()
+    assert sorted(path.name for path in out.parent.iterdir()) == ["куб 20.gcode.3mf", "куб 20.plate.png"]
 
     settings = summary["settings"]
     assert settings["textured_plate_temp"] == "55"

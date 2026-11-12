@@ -16,6 +16,7 @@ MACHINE = "Bambu Lab P2S 0.4 nozzle"
 PROCESS = "0.20mm Standard @BBL P2S"
 FILAMENT = "Bambu PLA Lite @BBL P2S 0.4 nozzle"
 CRASH = 3221225477  # 0xC0000005, access violation
+SUCCESS = {"error_string": "Success.", "return_code": 0}
 
 
 def _write(root, kind, name, **data):
@@ -27,7 +28,7 @@ def _write(root, kind, name, **data):
 
 @pytest.fixture
 def studio(tmp_path, monkeypatch):
-    """A fake Bambu Studio folder holding just the default P2S profiles."""
+    """A fake Bambu Studio folder holding the default P2S profiles and a few wrong ones."""
     studio = tmp_path / "studio"
     root = studio / "resources" / "profiles" / "BBL"
     _write(root, "machine", "fdm_bbl_common", instantiation="false",
@@ -37,12 +38,16 @@ def studio(tmp_path, monkeypatch):
     _write(root, "machine", MACHINE, inherits="fdm_bbl_common", instantiation="true",
            nozzle_diameter=["0.4"], include=["P2S template machine_start_gcode"])
     _write(root, "process", "fdm_process_common", instantiation="false",
-           sparse_infill_density="15%", inner_wall_speed=["300", "600", "600"])
+           sparse_infill_density="15%", inner_wall_speed=["300", "600", "600"],
+           standby_temperature_delta="-5", post_process=[""], filename_format="x")
     _write(root, "process", PROCESS, inherits="fdm_process_common", instantiation="true",
-           description="Standard profile", wall_loops="2")
+           description="Standard profile", wall_loops="2", compatible_printers=[MACHINE])
     _write(root, "filament", "Bambu PLA Lite @base", instantiation="false",
-           filament_density=["1.40"])
-    _write(root, "filament", FILAMENT, inherits="Bambu PLA Lite @base", instantiation="true")
+           filament_density=["1.40"], nozzle_temperature=["220"])
+    _write(root, "filament", FILAMENT, inherits="Bambu PLA Lite @base", instantiation="true",
+           compatible_printers=[MACHINE])
+    _write(root, "filament", "Bambu PLA Lite @BBL X1C", inherits="Bambu PLA Lite @base",
+           instantiation="true", compatible_printers=["Bambu Lab X1 Carbon 0.4 nozzle"])
     monkeypatch.setenv("BAMBU_STUDIO_DIR", str(studio))
     return studio
 
@@ -65,13 +70,14 @@ def model(work_dir):
 class FakeStudio:
     """Stands in for subprocess.run and behaves like the Bambu Studio CLI."""
 
-    def __init__(self, *, exit_code=0, write_result=True, archive=True, archive_kwargs=None,
-                 timeout=False):
+    def __init__(self, *, exit_code=0, result=SUCCESS, archive=True, archive_kwargs=None,
+                 timeout=False, stdout=b"", stderr=b""):
         self.exit_code = exit_code
-        self.write_result = write_result
+        self.result = result
         self.archive = archive
         self.archive_kwargs = archive_kwargs or {}
         self.timeout = timeout
+        self.stdout, self.stderr = stdout, stderr
         self.calls = []
 
     def __call__(self, args, **kwargs):
@@ -79,8 +85,7 @@ class FakeStudio:
         self.calls.append(args)
         self.cwd = Path(kwargs["cwd"])
         self.cwd_existed = self.cwd.is_dir()
-        out = Path(args[args.index("--export-3mf") + 1])
-        self.output_existed = out.exists()
+        self.export = Path(args[args.index("--export-3mf") + 1])
         machine_file, process_file = args[args.index("--load-settings") + 1].split(";")
         self.files = {
             "machine": Path(machine_file),
@@ -91,13 +96,12 @@ class FakeStudio:
             kind: json.loads(path.read_text(encoding="utf-8")) for kind, path in self.files.items()
         }
         if self.timeout:
-            raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
-        if self.write_result:
-            payload = {"error_string": "Success.", "return_code": 0}
-            (self.cwd / "result.json").write_text(json.dumps(payload), encoding="utf-8")
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout"), self.stdout, self.stderr)
+        if self.result is not None:
+            (self.cwd / "result.json").write_text(json.dumps(self.result), encoding="utf-8")
         if self.archive:
-            write_archive(out, **self.archive_kwargs)
-        return subprocess.CompletedProcess(args, self.exit_code, b"", b"")
+            write_archive(self.export, **self.archive_kwargs)
+        return subprocess.CompletedProcess(args, self.exit_code, self.stdout, self.stderr)
 
 
 @pytest.fixture
@@ -108,6 +112,21 @@ def fake(monkeypatch):
         return studio
 
     return install
+
+
+def _files(folder):
+    return sorted(path.name for path in folder.iterdir() if path.is_file())
+
+
+def _assert_nothing_published(result, out, run=None):
+    assert result["ok"] is False
+    assert not out.exists(), "a failed slice must leave no file at the output path"
+    assert not (out.parent / (out.name[: -len(".gcode.3mf")] + ".plate.png")).exists()
+    if run is not None:
+        assert not run.export.exists(), "the partial export must be removed"
+
+
+# --- the call -----------------------------------------------------------------
 
 
 def test_arguments_match_verified_call(studio, work_dir, model, fake):
@@ -124,9 +143,13 @@ def test_arguments_match_verified_call(studio, work_dir, model, fake):
         "--load-settings", f"{folder / 'machine.json'};{folder / 'process.json'}",
         "--load-filaments", str(folder / "filament.json"),
         "--slice", "0",
-        "--export-3mf", str(out.resolve()),
+        "--export-3mf", str(run.export),
         str(model.resolve()),
     ]
+    # The CLI writes beside the output (same volume), never onto the output itself.
+    assert run.export.parent == out.parent.resolve()
+    assert run.export != out.resolve()
+    assert run.export.name.endswith(".gcode.3mf")
     assert not folder.is_relative_to(studio), "profiles must be flattened copies, not the originals"
     assert not run.kwargs.get("shell")
     assert run.kwargs["stdin"] == subprocess.DEVNULL
@@ -151,14 +174,17 @@ def test_arguments_match_verified_call(studio, work_dir, model, fake):
     assert result["exit_code"] == 0
     assert result["error_string"] == "Success."
     assert result["output"] == str(out.resolve())
-    assert result["result"] == {"error_string": "Success.", "return_code": 0}
+    assert result["result"] == SUCCESS
     assert result["mismatches"] == []
+    assert result["cli_output"] is None
     summary = result["summary"]
+    assert summary["path"] == str(out.resolve())
+    assert summary["plates"] == 1
     assert summary["layers"] == 100
     assert summary["weight_source"] == "computed"
     assert summary["filament_weight_g"] == pytest.approx(4.28, abs=0.01)
-    assert summary["thumbnail"] == str((out.parent / "cube.png").resolve())
-    assert (out.parent / "cube.png").is_file()
+    assert summary["thumbnail"] == str((out.parent / "cube.plate.png").resolve())
+    assert _files(out.parent) == ["cube.gcode.3mf", "cube.plate.png"]
 
 
 def test_cyrillic_and_space_paths_pass_unchanged(studio, work_dir, fake):
@@ -171,36 +197,129 @@ def test_cyrillic_and_space_paths_pass_unchanged(studio, work_dir, fake):
     result = slicer.slice_model(str(model), str(out))
 
     assert run.args[-1] == str(model.resolve())
-    assert run.args[-2] == str(out.resolve())
+    assert run.export.parent == out.parent.resolve()
     assert result["ok"] is True
     assert result["output"] == str(out.resolve())
-    assert result["summary"]["thumbnail"] == str((out.parent / "деталь 1.png").resolve())
+    assert out.is_file()
+    assert result["summary"]["thumbnail"] == str((out.parent / "деталь 1.plate.png").resolve())
 
 
-def test_old_output_is_removed_before_run(studio, work_dir, model, fake):
-    run = fake(archive=False)
+def test_stale_output_and_thumbnail_are_removed_before_run(studio, work_dir, model, monkeypatch):
     out = work_dir / "cube.gcode.3mf"
     out.write_bytes(b"stale slice")
-    (work_dir / "cube.png").write_bytes(b"stale thumbnail")
+    (work_dir / "cube.plate.png").write_bytes(b"stale thumbnail")
+    (work_dir / "cube.png").write_bytes(b"someone else's picture")
+    seen = {}
 
+    def check_before_run(args, **kwargs):
+        seen["output"] = out.exists()
+        seen["thumbnail"] = (work_dir / "cube.plate.png").exists()
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    monkeypatch.setattr(slicer.subprocess, "run", check_before_run)
     result = slicer.slice_model(model, out)
 
-    assert run.output_existed is False
-    assert not out.exists()
-    assert not (work_dir / "cube.png").exists()
-    assert result["ok"] is False
+    assert seen == {"output": False, "thumbnail": False}
+    _assert_nothing_published(result, out)
     assert result["summary"] is None
     assert result["error_string"]
+    assert (work_dir / "cube.png").read_bytes() == b"someone else's picture"
+
+
+# --- failures leave nothing at the output path ------------------------------
 
 
 def test_crash_without_result_json(studio, work_dir, model, fake):
-    fake(exit_code=CRASH, write_result=False, archive=False)
-    result = slicer.slice_model(model, work_dir / "cube.gcode.3mf")
-    assert result["ok"] is False
+    run = fake(exit_code=CRASH, result=None, archive=False, stderr=b"fatal \xff error")
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out)
+    _assert_nothing_published(result, out, run)
     assert result["exit_code"] == CRASH
-    assert result["error_string"]
+    assert "0xC0000005" in result["error_string"]
     assert result["result"] is None
     assert result["summary"] is None
+    assert "fatal � error" in result["cli_output"]
+
+
+def test_exit_zero_without_result_json(studio, work_dir, model, fake):
+    run = fake(result=None)
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out)
+    _assert_nothing_published(result, out, run)
+    assert "result.json" in result["error_string"]
+    assert result["cli_output"] == ""
+
+
+def test_nonzero_exit_with_an_archive(studio, work_dir, model, fake):
+    run = fake(exit_code=1, stdout=b"slicing went wrong")
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out)
+    _assert_nothing_published(result, out, run)
+    assert result["exit_code"] == 1
+    assert result["summary"]["path"] is None, "the discarded slice has no path"
+    assert "slicing went wrong" in result["cli_output"]
+
+
+def test_result_json_with_failure_and_exit_zero(studio, work_dir, model, fake):
+    run = fake(result={"error_string": "Nothing to be sliced.", "return_code": -100})
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out)
+    _assert_nothing_published(result, out, run)
+    assert result["exit_code"] == 0
+    assert result["error_string"] == "Nothing to be sliced."
+
+
+def test_settings_mismatch(studio, work_dir, model, fake):
+    run = fake(archive_kwargs={"process": "0.16mm Standard @BBL P2S"})
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out)
+    _assert_nothing_published(result, out, run)
+    assert result["mismatches"] == [
+        {"key": "print_settings_id", "expected": PROCESS, "actual": "0.16mm Standard @BBL P2S"}
+    ]
+
+
+def test_more_than_one_plate(studio, work_dir, model, fake):
+    run = fake(archive_kwargs={"plates": 2})
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out)
+    _assert_nothing_published(result, out, run)
+    assert "2 plates" in result["error_string"]
+    assert result["summary"]["plates"] == 2
+
+
+def test_failed_move_into_place(studio, work_dir, model, fake, monkeypatch):
+    run = fake()
+
+    def refuse(src, dst):
+        raise PermissionError("output is open in another program")
+
+    monkeypatch.setattr(slicer.os, "replace", refuse)
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out)
+    _assert_nothing_published(result, out, run)
+    assert "open in another program" in result["error_string"]
+
+
+def test_timeout(studio, work_dir, model, fake):
+    run = fake(timeout=True, stderr=b"still slicing")
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out, timeout=5)
+    _assert_nothing_published(result, out, run)
+    assert result["error_string"] == "timeout"
+    assert result["exit_code"] is None
+    assert result["summary"] is None
+    assert "still slicing" in result["cli_output"]
+
+
+def test_cli_output_is_cut_to_the_tail(studio, work_dir, model, fake):
+    fake(exit_code=1, archive=False, stderr=b"x" * 5000 + b"END")
+    result = slicer.slice_model(model, work_dir / "cube.gcode.3mf")
+    assert result["cli_output"].endswith("END")
+    assert len(result["cli_output"]) < 2100
+
+
+# --- input checks before the CLI runs ---------------------------------------
 
 
 def test_output_outside_roots(studio, work_dir, model, fake, tmp_path_factory):
@@ -243,19 +362,72 @@ def test_unknown_profile(studio, work_dir, model, fake):
     assert run.calls == []
 
 
-def test_settings_mismatch(studio, work_dir, model, fake):
-    fake(archive_kwargs={"process": "0.16mm Standard @BBL P2S"})
-    result = slicer.slice_model(model, work_dir / "cube.gcode.3mf")
-    assert result["ok"] is False
-    assert result["mismatches"] == [
-        {"key": "print_settings_id", "expected": PROCESS, "actual": "0.16mm Standard @BBL P2S"}
-    ]
+@pytest.mark.parametrize(
+    "kind, name",
+    [
+        ("machine", "fdm_bbl_common"),
+        ("process", "fdm_process_common"),
+        ("filament", "Bambu PLA Lite @base"),
+    ],
+)
+def test_base_profiles_are_rejected(studio, work_dir, model, fake, kind, name):
+    run = fake()
+    with pytest.raises(ValueError, match="instantiable"):
+        slicer.slice_model(model, work_dir / "cube.gcode.3mf", **{kind: name})
+    assert run.calls == []
+
+
+def test_filament_for_another_printer_is_rejected(studio, work_dir, model, fake):
+    run = fake()
+    with pytest.raises(ValueError, match="compatible"):
+        slicer.slice_model(model, work_dir / "cube.gcode.3mf", filament="Bambu PLA Lite @BBL X1C")
+    assert run.calls == []
+
+
+def test_process_without_compatible_printers_is_rejected(studio, work_dir, model, fake):
+    root = studio / "resources" / "profiles" / "BBL"
+    _write(root, "process", "0.20mm Loose @BBL P2S", inherits="fdm_process_common",
+           instantiation="true")
+    run = fake()
+    with pytest.raises(ValueError, match="compatible"):
+        slicer.slice_model(model, work_dir / "cube.gcode.3mf", process="0.20mm Loose @BBL P2S")
+    assert run.calls == []
+
+
+# --- overrides ----------------------------------------------------------------
 
 
 def test_unknown_override_key(studio, work_dir, model, fake):
     run = fake()
     with pytest.raises(ValueError, match="no_such_key"):
         slicer.slice_model(model, work_dir / "cube.gcode.3mf", overrides={"no_such_key": "1"})
+    assert run.calls == []
+
+
+@pytest.mark.parametrize("key", ["filament_density", "printable_height", "nozzle_temperature"])
+def test_override_keys_outside_the_process_profile(studio, work_dir, model, fake, key):
+    # filament_density lives only in the filament, printable_height only in the machine;
+    # nozzle_temperature is a filament key and is denied outright.
+    run = fake()
+    with pytest.raises(ValueError):
+        slicer.slice_model(model, work_dir / "cube.gcode.3mf", overrides={key: "1"})
+    assert run.calls == []
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "name", "type", "from", "inherits", "include", "setting_id", "instantiation",
+        "post_process", "machine_start_gcode", "gcode_add_line_number",
+        "standby_temperature_delta", "chamber_temperatures", "filename_format",
+        "compatible_printers", "compatible_printers_condition",
+        "print_extruder_id", "print_extruder_variant",
+    ],
+)
+def test_denied_override_keys(studio, work_dir, model, fake, key):
+    run = fake()
+    with pytest.raises(ValueError, match="cannot be changed"):
+        slicer.slice_model(model, work_dir / "cube.gcode.3mf", overrides={key: "x"})
     assert run.calls == []
 
 
@@ -280,12 +452,7 @@ def test_overrides_go_into_the_flattened_process(studio, work_dir, model, fake):
     assert json.loads(original.read_text(encoding="utf-8")).get("sparse_infill_density") is None
 
 
-@pytest.mark.parametrize("key", ["name", "inherits", "include", "setting_id"])
-def test_identity_keys_cannot_be_overridden(studio, work_dir, model, fake, key):
-    run = fake()
-    with pytest.raises(ValueError, match="cannot be changed"):
-        slicer.slice_model(model, work_dir / "cube.gcode.3mf", overrides={key: "x"})
-    assert run.calls == []
+# --- vendor index ---------------------------------------------------------------
 
 
 def test_filament_named_with_a_slash_through_the_vendor_index(studio, work_dir, model, fake):
@@ -293,7 +460,7 @@ def test_filament_named_with_a_slash_through_the_vendor_index(studio, work_dir, 
     support = "Bambu Support For PA/PET @BBL P2S"
     (root / "filament" / "Bambu Support For PA PET @BBL P2S.json").write_text(
         json.dumps({"type": "filament", "name": support, "inherits": "Bambu PLA Lite @base",
-                    "instantiation": "true"}),
+                    "instantiation": "true", "compatible_printers": [MACHINE]}),
         encoding="utf-8",
     )
     index = {
@@ -318,12 +485,3 @@ def test_filament_named_with_a_slash_through_the_vendor_index(studio, work_dir, 
     assert run.json["filament"]["name"] == support
     assert run.files["filament"].name == "filament.json"
     assert result["ok"] is True, result
-
-
-def test_timeout(studio, work_dir, model, fake):
-    fake(timeout=True)
-    result = slicer.slice_model(model, work_dir / "cube.gcode.3mf", timeout=5)
-    assert result["ok"] is False
-    assert result["error_string"] == "timeout"
-    assert result["exit_code"] is None
-    assert result["summary"] is None

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -11,6 +12,7 @@ from print_mcp.profiles import (
     list_profiles,
     load_profile,
     profile_path,
+    raw_profile,
 )
 
 
@@ -256,6 +258,49 @@ def test_index_entries_outside_the_kind_folder_are_ignored(indexed_tree):
         )
         with pytest.raises(ProfileNotFound):
             load_profile("filament", name, root=indexed_tree)
+
+
+def _write_index(tree, kind, entries):
+    lists = {f"{other}_list": [] for other in ("machine", "process", "filament")}
+    lists[f"{kind}_list"] = entries
+    (tree.parent / "BBL.json").write_text(json.dumps(lists), encoding="utf-8")
+
+
+@pytest.mark.parametrize("sub_path", ["machine/C:/Windows/x.json", "machine/D:/x.json"])
+def test_index_entries_with_a_drive_are_ignored(tree, sub_path):
+    # On Windows, joining "C:" or "D:" onto the profile folder jumps to another drive.
+    _write_index(tree, "machine", [{"name": "Drive @BBL P2S", "sub_path": sub_path}])
+    assert profile_path("machine", "Drive @BBL P2S", root=tree) == (
+        tree / "machine" / "Drive @BBL P2S.json"
+    )
+    with pytest.raises(ProfileNotFound):
+        load_profile("machine", "Drive @BBL P2S", root=tree)
+
+
+def test_index_entry_through_a_link_outside_is_rejected(tree, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside_profiles")
+    (outside / "x.json").write_text(json.dumps({"name": "Linked"}), encoding="utf-8")
+    link = tree / "machine" / "linked"
+    try:
+        os.symlink(outside, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(str(outside), str(link))
+        except (ImportError, AttributeError, OSError):
+            pytest.skip("cannot create a directory link on this machine")
+    _write_index(tree, "machine", [{"name": "Linked", "sub_path": "machine/linked/x.json"}])
+    with pytest.raises(ValueError, match="outside"):
+        load_profile("machine", "Linked", root=tree)
+
+
+def test_raw_profile_is_the_file_itself(tree):
+    raw = raw_profile("process", "0.20mm Standard @BBL P2S", root=tree)
+    assert raw["inherits"] == "fdm_process_common"
+    assert "layer_height" not in raw
+    raw["description"] = "changed"
+    assert raw_profile("process", "0.20mm Standard @BBL P2S", root=tree)["description"] == "Standard profile"
 
 
 def test_list_profiles_with_index_includes_slash_names(indexed_tree):

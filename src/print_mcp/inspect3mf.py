@@ -135,7 +135,9 @@ def inspect_sliced(
     density: float | None = None,
     thumbnail_to: str | Path | None = None,
 ) -> dict:
-    """Summarise a sliced `.gcode.3mf`.
+    """Summarise a sliced `.gcode.3mf`; `plates` counts its plate G-code files.
+
+    Time, layers, filament and settings describe the first plate.
 
     `density` (g/cm3) is used to compute the filament weight when the G-code header
     reports 0 g, as a slice made with a filament profile of density 0 does.
@@ -191,6 +193,7 @@ def inspect_sliced(
 
     return {
         "path": str(archive_path),
+        "plates": len(plates),
         "time_s": prediction if prediction is not None else _duration_seconds(time_text),
         "time_text": time_text,
         "layers": int(layers) if layers is not None else None,
