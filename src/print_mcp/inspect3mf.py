@@ -24,8 +24,10 @@ SETTINGS_KEYS = (
     "textured_plate_temp",
     "filament_type",
     "filament_colour",
+    "filament_density",
     "sparse_infill_density",
     "wall_loops",
+    "top_shell_layers",
     "enable_support",
 )
 
@@ -136,8 +138,8 @@ def inspect_sliced(
     """Summarise a sliced `.gcode.3mf`.
 
     `density` (g/cm3) is used to compute the filament weight when the G-code header
-    reports 0 g, which is what the Bambu Studio CLI writes. `thumbnail_to` is a `.png`
-    path that receives the plate picture.
+    reports 0 g, as a slice made with a filament profile of density 0 does.
+    `thumbnail_to` is a `.png` path that receives the plate picture.
     """
     archive_path = resolve_allowed(path)
     thumbnail_path = None

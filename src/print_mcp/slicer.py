@@ -3,6 +3,11 @@
 The CLI prints nothing. The outcome is its exit code, a `result.json` it writes into its
 current folder, and the `.gcode.3mf` it exports. It crashes (0xC0000005) when it gets no
 machine, process and filament profiles, so all three are always passed.
+
+The CLI applies only the keys in the files it is given and ignores `inherits` and
+`include`; everything else falls back to built-in defaults (generic start G-code, filament
+density 0). So each profile is flattened into one self-contained file first. The G-code
+takes the settings ids from each file's `name`, so the requested names survive.
 """
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ from pathlib import Path
 
 from .inspect3mf import NotSliced, inspect_sliced
 from .paths import resolve_allowed, studio_exe
-from .profiles import ProfileNotFound, load_profile, profile_path
+from .profiles import flatten_profile
 
 DEFAULT_MACHINE = "Bambu Lab P2S 0.4 nozzle"
 DEFAULT_PROCESS = "0.20mm Standard @BBL P2S"
@@ -27,18 +32,10 @@ OUTPUT_SUFFIX = ".gcode.3mf"
 CHECKED_KEYS = ("printer_settings_id", "print_settings_id", "filament_settings_id", "curr_bed_type")
 
 # Profile identity keys that an override must not change.
-_IDENTITY_KEYS = frozenset({"type", "name", "inherits", "from", "setting_id", "instantiation"})
+_IDENTITY_KEYS = frozenset({"type", "name", "inherits", "include", "from", "setting_id", "instantiation"})
 
 
-def _existing_profile(kind: str, name: str) -> Path:
-    path = profile_path(kind, name)
-    if not path.is_file():
-        raise ProfileNotFound(f"no {kind} profile named {name!r} at {path}")
-    return path
-
-
-def _filament_density(filament: str) -> float | None:
-    value = load_profile("filament", filament).get("filament_density")
+def _first_float(value) -> float | None:
     if isinstance(value, list):
         value = value[0] if value else None
     try:
@@ -47,24 +44,21 @@ def _filament_density(filament: str) -> float | None:
         return None
 
 
-def _process_with_overrides(source: Path, process: str, overrides: dict[str, str]) -> dict:
-    """The process profile's own JSON with `overrides` applied.
+def _apply_overrides(profile: dict, process: str, overrides: dict[str, str]) -> None:
+    """Set `overrides` on the flattened process profile, in place.
 
-    A key must exist in the resolved profile (its `inherits` chain included). A list value
-    is replaced by a list of the same length filled with the new value.
+    A key must exist in the profile. A list value is replaced by a list of the same
+    length filled with the new value.
     """
-    resolved = load_profile("process", process)
-    data = json.loads(source.read_text(encoding="utf-8-sig"))
     for key, value in overrides.items():
         if key in _IDENTITY_KEYS:
             raise ValueError(f"override key {key!r} cannot be changed")
-        if key not in resolved:
+        if key not in profile:
             raise ValueError(f"process profile {process!r} has no key {key!r}")
         if not isinstance(value, str):
             raise ValueError(f"override {key!r} must be a string, got {type(value).__name__}")
-        current = resolved[key]
-        data[key] = [value] * max(len(current), 1) if isinstance(current, list) else value
-    return data
+        current = profile[key]
+        profile[key] = [value] * max(len(current), 1) if isinstance(current, list) else value
 
 
 def _read_result(path: Path) -> dict | None:
@@ -111,11 +105,14 @@ def slice_model(
     if timeout <= 0:
         raise ValueError("timeout must be positive")
 
-    machine_file = _existing_profile("machine", machine)
-    process_file = _existing_profile("process", process)
-    filament_file = _existing_profile("filament", filament)
-    density = _filament_density(filament)
-    process_data = _process_with_overrides(process_file, process, overrides) if overrides else None
+    profiles = {
+        "machine": flatten_profile("machine", machine),
+        "process": flatten_profile("process", process),
+        "filament": flatten_profile("filament", filament),
+    }
+    if overrides:
+        _apply_overrides(profiles["process"], process, overrides)
+    density = _first_float(profiles["filament"].get("filament_density"))
 
     # A stale slice or thumbnail must never pass for the new one.
     thumbnail_path = output_path.with_name(name[: -len(OUTPUT_SUFFIX)] + ".png")
@@ -135,20 +132,22 @@ def slice_model(
 
     with tempfile.TemporaryDirectory(prefix="print-mcp-", ignore_cleanup_errors=True) as tmp:
         work = Path(tmp)
-        process_arg = process_file
-        if process_data is not None:
-            # Same file name as the original, so the CLI reports the same print_settings_id.
-            (work / "profiles").mkdir()
-            process_arg = work / "profiles" / process_file.name
-            process_arg.write_text(json.dumps(process_data, indent=4, ensure_ascii=False), encoding="utf-8")
+        files = {}
+        (work / "profiles").mkdir()
+        for kind, data in profiles.items():
+            # Fixed file names: the G-code takes the settings ids from `name`, not the file.
+            files[kind] = work / "profiles" / f"{kind}.json"
+            files[kind].write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
+        if ";" in str(work):
+            raise ValueError(f"temporary folder {work} contains ';', which splits --load-settings")
         cwd = work / "cwd"
         cwd.mkdir()
         args = [
             str(studio_exe()),
             "--debug", "3",
             "--curr-bed-type", bed_type,
-            "--load-settings", f"{machine_file};{process_arg}",
-            "--load-filaments", str(filament_file),
+            "--load-settings", f"{files['machine']};{files['process']}",
+            "--load-filaments", str(files["filament"]),
             "--slice", "0",
             "--export-3mf", str(output_path),
             str(model_path),

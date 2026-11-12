@@ -5,7 +5,13 @@ import json
 
 import pytest
 
-from print_mcp.profiles import ProfileNotFound, list_profiles, load_profile, profile_path
+from print_mcp.profiles import (
+    ProfileNotFound,
+    flatten_profile,
+    list_profiles,
+    load_profile,
+    profile_path,
+)
 
 
 def _write(root, kind, name, **data):
@@ -118,6 +124,149 @@ def test_profile_path_layout(tree):
     )
 
 
+# --- include ----------------------------------------------------------------
+
+
+@pytest.fixture
+def machine_with_templates(tree):
+    """A machine like the P2S: generic G-code in the parent, P2S G-code in templates."""
+    _write(tree, "machine", "fdm_bbl_common", instantiation="false",
+           machine_start_gcode="G28 ; generic", machine_end_gcode="M84 ; generic",
+           retraction_length=["0.8"], printable_height="250")
+    _write(tree, "machine", "P2S template machine_start_gcode", instantiation="false",
+           machine_start_gcode=";=== P2S start ===")
+    _write(tree, "machine", "P2S template machine_end_gcode", instantiation="false",
+           machine_end_gcode=";=== P2S end ===", retraction_length=["0.6"])
+    _write(tree, "machine", "Bambu Lab P2S 0.4 nozzle", inherits="fdm_bbl_common",
+           instantiation="true", setting_id="GM049", printable_height="256",
+           retraction_length=["0.5"],
+           include=["P2S template machine_start_gcode", "P2S template machine_end_gcode"])
+    return tree
+
+
+def test_include_templates_override_parents_and_leaf_overrides_templates(machine_with_templates):
+    profile = load_profile("machine", "Bambu Lab P2S 0.4 nozzle", root=machine_with_templates)
+    assert profile["machine_start_gcode"] == ";=== P2S start ==="
+    assert profile["machine_end_gcode"] == ";=== P2S end ==="
+    assert profile["retraction_length"] == ["0.5"]
+    assert profile["printable_height"] == "256"
+    # Template identity keys never leak into the including profile.
+    assert profile["name"] == "Bambu Lab P2S 0.4 nozzle"
+    assert profile["instantiation"] == "true"
+    assert profile["setting_id"] == "GM049"
+
+
+def test_template_with_its_own_links_is_rejected(machine_with_templates):
+    _write(machine_with_templates, "machine", "nested template", inherits="fdm_bbl_common")
+    _write(machine_with_templates, "machine", "nested user", instantiation="true",
+           include=["nested template"])
+    with pytest.raises(ValueError, match="template"):
+        load_profile("machine", "nested user", root=machine_with_templates)
+
+
+def test_missing_template_raises_profile_not_found(tree):
+    _write(tree, "machine", "lonely", instantiation="true", include=["no such template"])
+    with pytest.raises(ProfileNotFound):
+        load_profile("machine", "lonely", root=tree)
+
+
+def test_flatten_profile_is_self_contained(machine_with_templates):
+    flat = flatten_profile("machine", "Bambu Lab P2S 0.4 nozzle", root=machine_with_templates)
+    assert "inherits" not in flat
+    assert "include" not in flat
+    assert flat["name"] == "Bambu Lab P2S 0.4 nozzle"
+    assert flat["type"] == "machine"
+    assert flat["setting_id"] == "GM049"
+    assert flat["machine_start_gcode"] == ";=== P2S start ==="
+    assert flat["retraction_length"] == ["0.5"]
+
+
+# --- vendor index -----------------------------------------------------------
+
+
+@pytest.fixture
+def indexed_tree(tree):
+    """`BBL.json` next to the BBL folder, like Bambu Studio's resources/profiles/BBL.json."""
+    support_base = "Bambu Support For PA/PET @base"
+    support_p2s = "Bambu Support For PA/PET @BBL P2S"
+    (tree / "filament" / "Bambu Support For PA PET @base.json").write_text(
+        json.dumps({"type": "filament", "name": support_base, "instantiation": "false",
+                    "filament_density": ["1.20"], "filament_type": ["Support"]}),
+        encoding="utf-8",
+    )
+    (tree / "filament" / "Bambu Support For PA PET @BBL P2S.json").write_text(
+        json.dumps({"type": "filament", "name": support_p2s, "inherits": support_base,
+                    "instantiation": "true", "nozzle_temperature": ["250"]}),
+        encoding="utf-8",
+    )
+    (tree / "filament" / "SUNLU").mkdir()
+    (tree / "filament" / "SUNLU" / "SUNLU PLA @base.json").write_text(
+        json.dumps({"type": "filament", "name": "SUNLU PLA @base", "instantiation": "false"}),
+        encoding="utf-8",
+    )
+
+    def entries(kind):
+        return [
+            {"name": path.stem, "sub_path": f"{kind}/{path.name}"}
+            for path in sorted((tree / kind).glob("*.json"))
+            if not path.stem.startswith("Bambu Support")
+        ]
+
+    index = {
+        "name": "Bambulab",
+        "machine_list": entries("machine"),
+        "process_list": entries("process"),
+        "filament_list": entries("filament") + [
+            {"name": support_base, "sub_path": "filament/Bambu Support For PA PET @base.json"},
+            {"name": support_p2s, "sub_path": "filament/Bambu Support For PA PET @BBL P2S.json"},
+            {"name": "SUNLU PLA @base", "sub_path": "filament/SUNLU/SUNLU PLA @base.json"},
+            {"name": "Escape @BBL P2S", "sub_path": "filament/../../escape.json"},
+            {"name": "Absolute @BBL P2S", "sub_path": "C:/escape.json"},
+        ],
+    }
+    (tree.parent / "BBL.json").write_text(json.dumps(index), encoding="utf-8")
+    return tree
+
+
+def test_index_maps_names_with_slash(indexed_tree):
+    name = "Bambu Support For PA/PET @BBL P2S"
+    assert profile_path("filament", name, root=indexed_tree) == (
+        indexed_tree / "filament" / "Bambu Support For PA PET @BBL P2S.json"
+    )
+    profile = load_profile("filament", name, root=indexed_tree)
+    assert profile["name"] == name
+    assert profile["filament_density"] == ["1.20"]
+    assert profile["nozzle_temperature"] == ["250"]
+
+
+def test_index_reaches_subfolders(indexed_tree):
+    assert load_profile("filament", "SUNLU PLA @base", root=indexed_tree)["name"] == "SUNLU PLA @base"
+
+
+@pytest.mark.parametrize("name", ["a/b", "..\\x", "a;b", "C:x", "Escape @BBL P2S/.."])
+def test_index_does_not_open_bad_names(indexed_tree, name):
+    with pytest.raises(ValueError):
+        load_profile("filament", name, root=indexed_tree)
+
+
+def test_index_entries_outside_the_kind_folder_are_ignored(indexed_tree):
+    for name in ("Escape @BBL P2S", "Absolute @BBL P2S"):
+        assert profile_path("filament", name, root=indexed_tree) == (
+            indexed_tree / "filament" / f"{name}.json"
+        )
+        with pytest.raises(ProfileNotFound):
+            load_profile("filament", name, root=indexed_tree)
+
+
+def test_list_profiles_with_index_includes_slash_names(indexed_tree):
+    names = _names(list_profiles(printer="P2S", nozzle="0.4", root=indexed_tree)["filaments"])
+    assert names == [
+        "Bambu PETG HF @BBL P2S",
+        "Bambu PLA Lite @BBL P2S 0.4 nozzle",
+        "Bambu Support For PA/PET @BBL P2S",
+    ]
+
+
 # --- list_profiles ----------------------------------------------------------
 
 
@@ -181,7 +330,8 @@ def test_list_profiles_other_nozzle(tree):
 
 
 def test_list_profiles_skips_profiles_not_loadable_by_file_name(tree):
-    # Bambu ships "Bambu Support For PA/PET @base" as "Bambu Support For PA PET @base.json".
+    # Bambu ships "Bambu Support For PA/PET @base" as "Bambu Support For PA PET @base.json";
+    # without a vendor index that name cannot be found, so its children are left out.
     _write(tree, "filament", "Bambu Support For PA PET @base", instantiation="false")
     (tree / "filament" / "Bambu Support For PA PET @base.json").write_text(
         json.dumps({"name": "Bambu Support For PA/PET @base", "instantiation": "false"}),

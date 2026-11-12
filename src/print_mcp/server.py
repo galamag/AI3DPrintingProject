@@ -101,8 +101,9 @@ async def inspect_sliced(
     Returns JSON with the predicted time (`time_s`, `time_text`), `layers`,
     `filament_length_mm`, `filament_weight_g` with its `weight_source`, `max_z_mm`, and
     `settings` recorded in the G-code (printer, process and filament profile names, bed
-    type, layer height, temperatures, infill, walls, supports). Command-line slices report
-    0 g, so pass `density` in g/cm3 (from list_print_profiles) to compute the weight.
+    type, layer height, temperatures, filament density, infill, walls, top shell layers,
+    supports). When the G-code reports 0 g, pass `density` in g/cm3 (from
+    list_print_profiles) to compute the weight.
     `thumbnail_to` is a .png path that receives the plate picture. Paths must lie inside
     the repository, Documents/BlenderMCP or PRINT_MCP_WORK_DIR.
     """

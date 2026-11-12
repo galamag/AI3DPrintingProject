@@ -23,10 +23,12 @@ HEADER = """\
 
 ; CONFIG_BLOCK_START
 ; curr_bed_type = {bed}
+; filament_density = 1.4
 ; filament_settings_id = "{filament}"
 ; print_settings_id = {process}
 ; printer_settings_id = {machine}
 ; sparse_infill_density = {infill}
+; top_shell_layers = 5
 ; CONFIG_BLOCK_END
 
 G28
@@ -101,11 +103,14 @@ def test_settings_are_unquoted_and_complete(sliced):
     assert settings["printer_settings_id"] == "Bambu Lab P2S 0.4 nozzle"
     assert settings["curr_bed_type"] == "Textured PEI Plate"
     assert settings["sparse_infill_density"] == "20%"
+    assert settings["filament_density"] == "1.4"
+    assert settings["top_shell_layers"] == "5"
     for key in (
         "printer_model", "printer_settings_id", "print_settings_id", "filament_settings_id",
         "curr_bed_type", "layer_height", "nozzle_diameter", "nozzle_volume_type",
         "nozzle_temperature", "textured_plate_temp", "filament_type", "filament_colour",
-        "sparse_infill_density", "wall_loops", "enable_support",
+        "filament_density", "sparse_infill_density", "wall_loops", "top_shell_layers",
+        "enable_support",
     ):
         assert key in settings
     assert settings["wall_loops"] is None
