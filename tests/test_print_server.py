@@ -11,9 +11,42 @@ def _tools():
     return asyncio.run(server.mcp.list_tools())
 
 
-def test_exactly_three_tools():
+def test_exactly_seven_tools():
     names = sorted(tool.name for tool in _tools())
-    assert names == ["inspect_sliced", "list_print_profiles", "slice_model"]
+    assert names == [
+        "inspect_sliced",
+        "list_print_profiles",
+        "slice_model",
+        "studio_capture",
+        "studio_click",
+        "studio_open",
+        "studio_windows",
+    ]
+
+
+def test_click_description_demands_a_capture_and_consent():
+    click = next(tool for tool in _tools() if tool.name == "studio_click")
+    text = click.description.lower()
+    assert "studio_capture" in text
+    assert "consent" in text
+
+
+class _NoWindows:
+    def windows(self):
+        return []
+
+
+def test_studio_errors_come_back_as_text(monkeypatch):
+    from print_mcp import studio
+
+    monkeypatch.setattr(studio, "Win32Backend", _NoWindows)
+    for reply in (
+        asyncio.run(server.studio_windows()),
+        asyncio.run(server.studio_click(x=1, y=1)),
+        asyncio.run(server.studio_capture()),
+    ):
+        text = reply if isinstance(reply, str) else reply[0]
+        assert "Bambu Studio is not running" in text or text == "[]", text
 
 
 def test_every_tool_has_a_description():

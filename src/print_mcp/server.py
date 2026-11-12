@@ -1,33 +1,42 @@
-"""MCP server `print`: Bambu Studio profiles, slicing and sliced-file inspection.
+"""MCP server `print`: Bambu Studio profiles, slicing, sliced-file inspection and its window.
 
 Run with `uv run --frozen python -m print_mcp.server` (stdio transport).
 """
 import asyncio
 import json
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
-from . import inspect3mf, profiles, slicer
+from . import inspect3mf, profiles, slicer, studio
 
 INSTRUCTIONS = """\
-Prepares prints for the user's Bambu Lab P2S through the Bambu Studio command line.
+Prepares prints for the user's Bambu Lab P2S through Bambu Studio.
 
 Workflow: list_print_profiles to pick the machine, process and filament names, slice_model
 to slice a model into a .gcode.3mf, then show the user the plate thumbnail, the time and the
 filament weight. inspect_sliced reads an existing .gcode.3mf.
 
+The Bambu Studio window is driven in the background, without taking focus or moving the
+mouse: studio_windows lists its windows, studio_capture shows one, studio_click clicks a
+point found on a fresh capture, studio_open shows a file in it. Button positions are never
+fixed; read them from a capture each time. Clicks that start, stop or cancel a print need the
+user's explicit consent for that print.
+
 Model and output paths must lie inside the repository, Documents/BlenderMCP or the folder in
-PRINT_MCP_WORK_DIR. These tools only slice and read files; they never start a print.
+PRINT_MCP_WORK_DIR.
 """
 
 mcp = FastMCP("print", instructions=INSTRUCTIONS)
+
+# Errors caused by the request or the current state, returned as text rather than raised.
+_USER_ERRORS = (ValueError, LookupError, FileNotFoundError, studio.StudioError)
 
 
 async def _run(func, *args, **kwargs) -> str:
     """Run blocking work off the event loop; reply with JSON, or with text for bad input."""
     try:
         value = await asyncio.to_thread(func, *args, **kwargs)
-    except (ValueError, LookupError) as exc:
+    except _USER_ERRORS as exc:
         return f"Error: {exc}"
     return json.dumps(value, ensure_ascii=False, indent=2)
 
@@ -117,6 +126,83 @@ async def inspect_sliced(
     return await _run(
         inspect3mf.inspect_sliced, path, density=density, thumbnail_to=thumbnail_to
     )
+
+
+def _list_windows() -> list[dict]:
+    return [window.as_dict() for window in studio.list_windows()]
+
+
+@mcp.tool()
+async def studio_windows() -> str:
+    """List the open Bambu Studio windows: hwnd, title, position, size and whether minimized.
+
+    The main window's title is "<project> - BambuStudio". Dialogs such as the print-send
+    window are separate windows and appear here too. Pass an hwnd to the other studio_*
+    tools when more than one window is open.
+    """
+    return await _run(_list_windows)
+
+
+@mcp.tool(structured_output=False)
+async def studio_capture(
+    hwnd: int | None = None,
+    title_contains: str | None = None,
+    scale: float = 0.5,
+    crop: list[int] | None = None,
+):
+    """Capture a Bambu Studio window as a PNG, even when other windows cover it.
+
+    Does not focus or move the window. `crop` is [left, top, right, bottom] in window
+    pixels and is applied before `scale` (0.1 to 1.0; 0.5 keeps a 2560 px window readable).
+    Returns the image and JSON with the window, the image size and `to_window_px`, the
+    formula that turns an image pixel into the window pixel studio_click expects. A
+    minimized window cannot be captured.
+    """
+    try:
+        data, info = await asyncio.to_thread(
+            studio.capture_window,
+            hwnd=hwnd,
+            title_contains=title_contains,
+            scale=scale,
+            crop=tuple(crop) if crop is not None else None,
+        )
+    except _USER_ERRORS as exc:
+        return f"Error: {exc}"
+    return [Image(data=data, format="png"), json.dumps(info, ensure_ascii=False, indent=2)]
+
+
+@mcp.tool()
+async def studio_click(
+    x: int,
+    y: int,
+    hwnd: int | None = None,
+    title_contains: str | None = None,
+) -> str:
+    """Left-click a point in a Bambu Studio window without focusing it or moving the mouse.
+
+    Always call studio_capture first and take the point from that capture: (x, y) are
+    window pixels, so convert image pixels with its `to_window_px`. Never reuse old
+    coordinates; button positions depend on the window size and the Bambu Studio version.
+    Buttons that start, stop, pause, resume or cancel a print, including "Print plate" and
+    "Send" in whatever language the UI uses, may be clicked only after the user's explicit
+    consent to that particular print.
+    Capture again afterwards to check the effect. Returns the control that got the click
+    (`class_trail`) and whether the foreground window changed (`foreground_changed`).
+    """
+    return await _run(studio.click_window, x, y, hwnd=hwnd, title_contains=title_contains)
+
+
+@mcp.tool()
+async def studio_open(path: str, timeout: float = 60.0) -> str:
+    """Show a .3mf, .gcode.3mf, .stl, .step, .stp or .obj file in Bambu Studio.
+
+    If a Bambu Studio window is already titled with the file's project name, it is returned
+    and nothing is launched (`launched: false`). Otherwise Bambu Studio starts with the
+    file, asked not to take focus, and the call waits up to `timeout` seconds for its window.
+    The path must lie inside the repository, Documents/BlenderMCP or PRINT_MCP_WORK_DIR.
+    Opening a sliced file does not keep its slice: the window slices again.
+    """
+    return await _run(studio.open_in_studio, path, timeout=timeout)
 
 
 def main() -> None:
