@@ -2,6 +2,8 @@
 
 Status: approved by the user on 2026-11-13 for the text `$AIBAT$`; size and proportions to be confirmed from the renders.
 
+**Joint gap chosen on 2026-11-13 from the printed test piece.** The user tried the three backs: 0.15 mm closes well with no play and stays shut when turned over, 0.20 mm has play, 0.25 mm falls out. The box therefore uses a 0.15 mm sideways gap between lip and skirt: the back half's skirt is 1.65 mm thick, the wall behind each groove is 1.35 mm, and a ridge has 0.05 mm of free play in its groove. Wherever the text below still says 0.20 mm for the box's sideways gap, 1.60 mm for its skirt or 0.10 mm for the ridge play, read these values instead. The model was rebuilt and measured with them.
+
 **Revisions of 2026-11-13.** The design changed six times on the same day. This brief includes the result of all six.
 
 1. **Name on both sides** (replaced by change 5). The back half was to carry the name turned half a turn, so that it read left to right from behind.
