@@ -6,6 +6,7 @@ It never opens the Bambu Studio window and never talks to a printer.
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 
 import pytest
@@ -141,3 +142,9 @@ def test_live_slice_with_override(cube, tmp_path):
     assert result["ok"] is True, result
     assert result["summary"]["settings"]["sparse_infill_density"] == "30%"
     assert result["summary"]["settings"]["print_settings_id"] == "0.20mm Standard @BBL P2S"
+    # The project lists the override as changed, so the window keeps it instead of
+    # resetting it to the system preset.
+    with zipfile.ZipFile(out) as archive:
+        project = json.loads(archive.read("Metadata/project_settings.config"))
+    assert project["different_settings_to_system"] == ["sparse_infill_density", "", ""]
+    assert project["sparse_infill_density"] == "30%"

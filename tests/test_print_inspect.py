@@ -1,6 +1,7 @@
 """print_mcp.inspect3mf: reading a sliced .gcode.3mf archive."""
 from __future__ import annotations
 
+import json
 import zipfile
 
 import pytest
@@ -61,10 +62,16 @@ def write_archive(
     infill="20%",
     gcode=True,
     plates=1,
+    project_settings=None,
 ):
-    """Write a minimal sliced archive shaped like Bambu Studio's output."""
+    """Write a minimal sliced archive shaped like Bambu Studio's output.
+
+    `project_settings` is a dict written as Metadata/project_settings.config, or None for none.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        if project_settings is not None:
+            archive.writestr("Metadata/project_settings.config", json.dumps(project_settings, indent=4))
         if gcode:
             text = HEADER.format(weight=weight, machine=machine, process=process,
                                  filament=filament, bed=bed, infill=infill)

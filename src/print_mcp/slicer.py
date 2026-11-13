@@ -9,6 +9,15 @@ The CLI applies only the keys in the files it is given and ignores `inherits` an
 density 0). So each profile is flattened into one self-contained file first. The G-code
 takes the settings ids from each file's `name`, so the requested names survive.
 
+A `.gcode.3mf` opened in the Bambu Studio window loads as a project: the window selects the
+system presets named in it and keeps a project value only for the keys that
+`different_settings_to_system` lists as changed (one `;`-joined entry per preset: process,
+filaments, printer). Every other key is reset to the system preset's value, so overrides
+the project does not list are lost and the window slices with the plain preset. The CLI
+fills the project's process entry from the first entry of the same key in the process file
+it loads, unless the model is a Bambu Studio 3mf project (then it leaves it empty), so the
+changed override keys are written there, and the exported project is checked for them.
+
 The CLI exports to a partial file beside the output, on the same volume. Only a run that
 passes every check is renamed onto the output, so a failed or half-written slice never
 appears there.
@@ -21,6 +30,7 @@ import os
 import subprocess
 import tempfile
 import uuid
+import zipfile
 from pathlib import Path
 
 from .inspect3mf import NotSliced, inspect_sliced
@@ -39,12 +49,17 @@ THUMBNAIL_SUFFIX = ".plate.png"
 # Settings the sliced G-code must carry exactly as requested.
 CHECKED_KEYS = ("printer_settings_id", "print_settings_id", "filament_settings_id", "curr_bed_type")
 
+# The keys each preset changes from its system preset, as Bambu Studio records them.
+CHANGED_KEYS_RECORD = "different_settings_to_system"
+PROJECT_SETTINGS_ENTRY = "Metadata/project_settings.config"
+
 # Override keys that are never allowed: profile identity, anything that runs or emits
-# G-code or names files, temperatures, compatibility and extruder selection.
+# G-code or names files, temperatures, compatibility, extruder selection, and the record
+# of changed keys, which slice_model writes itself.
 _DENIED_OVERRIDES = (
     "type", "name", "inherits", "include", "from", "setting_id", "instantiation",
     "post_process", "*gcode*", "*temperature*", "filename_format", "compatible_*",
-    "print_extruder_*",
+    "print_extruder_*", CHANGED_KEYS_RECORD,
 )
 
 _CLI_OUTPUT_LIMIT = 2000
@@ -77,12 +92,13 @@ def _require_compatible(kind: str, name: str, profile: dict, machine: str) -> No
         )
 
 
-def _apply_overrides(profile: dict, process: str, overrides: dict[str, str]) -> None:
-    """Set `overrides` on the flattened process profile, in place.
+def _apply_overrides(profile: dict, process: str, overrides: dict[str, str]) -> list[str]:
+    """Set `overrides` on the flattened process profile, in place; return the changed keys, sorted.
 
     A key must exist in the profile and must not match the denylist. A list value is
     replaced by a list of the same length filled with the new value.
     """
+    changed = []
     for key, value in overrides.items():
         if any(fnmatch.fnmatchcase(key, pattern) for pattern in _DENIED_OVERRIDES):
             raise ValueError(f"override key {key!r} cannot be changed")
@@ -91,7 +107,25 @@ def _apply_overrides(profile: dict, process: str, overrides: dict[str, str]) -> 
         if not isinstance(value, str):
             raise ValueError(f"override {key!r} must be a string, got {type(value).__name__}")
         current = profile[key]
-        profile[key] = [value] * max(len(current), 1) if isinstance(current, list) else value
+        new = [value] * max(len(current), 1) if isinstance(current, list) else value
+        if new != current:
+            changed.append(key)
+        profile[key] = new
+    return sorted(changed)
+
+
+def _recorded_process_changes(path: Path) -> set[str]:
+    """Keys the sliced project lists as changed in its process preset; empty if none or unreadable."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            settings = json.loads(archive.read(PROJECT_SETTINGS_ENTRY).decode("utf-8-sig"))
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+        return set()
+    record = settings.get(CHANGED_KEYS_RECORD) if isinstance(settings, dict) else None
+    if not isinstance(record, list) or not record or not isinstance(record[0], str):
+        return set()
+    # Setting keys are plain identifiers, so the entry needs no unquoting.
+    return {key for key in record[0].split(";") if key}
 
 
 def _read_result(path: Path) -> dict | None:
@@ -160,8 +194,10 @@ def slice_model(
     }
     _require_compatible("process", process, profiles["process"], machine)
     _require_compatible("filament", filament, profiles["filament"], machine)
-    if overrides:
-        _apply_overrides(profiles["process"], process, overrides)
+    changed = _apply_overrides(profiles["process"], process, overrides) if overrides else []
+    if changed:
+        # The CLI reads entry 0 of this list unchecked, so it is written only when non-empty.
+        profiles["process"][CHANGED_KEYS_RECORD] = [";".join(changed)]
     density = _first_float(profiles["filament"].get("filament_density"))
 
     stem = name[: -len(OUTPUT_SUFFIX)]
@@ -264,6 +300,14 @@ def slice_model(
                     if summary["plates"] != 1:
                         problems.append(
                             f"the slice has {summary['plates']} plates; only one plate is supported"
+                        )
+                    recorded = _recorded_process_changes(partial_path) if changed else set()
+                    unrecorded = [key for key in changed if key not in recorded]
+                    if unrecorded:
+                        problems.append(
+                            "the sliced file does not list these overrides as changed, so the "
+                            "Bambu Studio window would reset them to the system preset: "
+                            + ", ".join(unrecorded)
                         )
             elif not problems:
                 problems.append("Bambu Studio reported success but wrote no sliced file")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -68,16 +69,24 @@ def model(work_dir):
 
 
 class FakeStudio:
-    """Stands in for subprocess.run and behaves like the Bambu Studio CLI."""
+    """Stands in for subprocess.run and behaves like the Bambu Studio CLI.
+
+    `record` says how the exported project records the process keys changed from the system
+    preset: "copy" does what the real CLI does with an STL model (the first entry of the
+    process file's different_settings_to_system becomes the project's process entry),
+    "empty" leaves it empty, as the CLI does for a Bambu 3mf model, and "missing" writes no
+    project settings at all.
+    """
 
     def __init__(self, *, exit_code=0, result=SUCCESS, archive=True, archive_kwargs=None,
-                 timeout=False, stdout=b"", stderr=b""):
+                 timeout=False, stdout=b"", stderr=b"", record="copy"):
         self.exit_code = exit_code
         self.result = result
         self.archive = archive
         self.archive_kwargs = archive_kwargs or {}
         self.timeout = timeout
         self.stdout, self.stderr = stdout, stderr
+        self.record = record
         self.calls = []
 
     def __call__(self, args, **kwargs):
@@ -100,7 +109,16 @@ class FakeStudio:
         if self.result is not None:
             (self.cwd / "result.json").write_text(json.dumps(self.result), encoding="utf-8")
         if self.archive:
-            write_archive(self.export, **self.archive_kwargs)
+            archive_kwargs = dict(self.archive_kwargs)
+            if self.record != "missing":
+                passed = self.json["process"].get(slicer.CHANGED_KEYS_RECORD) or [""]
+                archive_kwargs.setdefault("project_settings", {
+                    "name": "project_settings",
+                    "from": "project",
+                    "different_settings_to_system": [passed[0] if self.record == "copy" else "", "", ""],
+                    "inherits_group": ["", "", ""],
+                })
+            write_archive(self.export, **archive_kwargs)
         return subprocess.CompletedProcess(args, self.exit_code, self.stdout, self.stderr)
 
 
@@ -169,6 +187,9 @@ def test_arguments_match_verified_call(studio, work_dir, model, fake):
     assert run.json["process"]["sparse_infill_density"] == "15%"
     assert run.json["process"]["wall_loops"] == "2"
     assert run.json["filament"]["filament_density"] == ["1.40"]
+    # Nothing is overridden, so no profile carries a record of changed keys.
+    for kind in ("machine", "process", "filament"):
+        assert slicer.CHANGED_KEYS_RECORD not in run.json[kind]
 
     assert result["ok"] is True
     assert result["exit_code"] == 0
@@ -421,7 +442,7 @@ def test_override_keys_outside_the_process_profile(studio, work_dir, model, fake
         "post_process", "machine_start_gcode", "gcode_add_line_number",
         "standby_temperature_delta", "chamber_temperatures", "filename_format",
         "compatible_printers", "compatible_printers_condition",
-        "print_extruder_id", "print_extruder_variant",
+        "print_extruder_id", "print_extruder_variant", "different_settings_to_system",
     ],
 )
 def test_denied_override_keys(studio, work_dir, model, fake, key):
@@ -450,6 +471,101 @@ def test_overrides_go_into_the_flattened_process(studio, work_dir, model, fake):
     assert not run.files["process"].exists(), "the temporary profile must be removed"
     original = studio / "resources" / "profiles" / "BBL" / "process" / f"{PROCESS}.json"
     assert json.loads(original.read_text(encoding="utf-8")).get("sparse_infill_density") is None
+
+
+def _project_record(path):
+    with zipfile.ZipFile(path) as archive:
+        settings = json.loads(archive.read("Metadata/project_settings.config"))
+    return settings["different_settings_to_system"]
+
+
+def test_overrides_are_recorded_as_changed_from_the_system_preset(studio, work_dir, model, fake):
+    # The window resets every process key the project does not list as changed, so the
+    # process file tells the CLI which keys differ, one ';'-joined entry, sorted.
+    run = fake()
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(
+        model,
+        out,
+        overrides={"wall_loops": "4", "sparse_infill_density": "30%", "inner_wall_speed": "250"},
+    )
+
+    assert result["ok"] is True, result
+    assert run.json["process"][slicer.CHANGED_KEYS_RECORD] == [
+        "inner_wall_speed;sparse_infill_density;wall_loops"
+    ]
+    for kind in ("machine", "filament"):
+        assert slicer.CHANGED_KEYS_RECORD not in run.json[kind]
+    assert _project_record(out)[0] == "inner_wall_speed;sparse_infill_density;wall_loops"
+
+
+def test_overrides_equal_to_the_profile_are_not_recorded(studio, work_dir, model, fake):
+    # wall_loops is already "2". No entry at all, never an empty list: the CLI reads entry 0.
+    run = fake()
+    result = slicer.slice_model(model, work_dir / "cube.gcode.3mf", overrides={"wall_loops": "2"})
+
+    assert result["ok"] is True, result
+    assert slicer.CHANGED_KEYS_RECORD not in run.json["process"]
+
+
+def test_only_changed_overrides_are_recorded(studio, work_dir, model, fake):
+    run = fake()
+    result = slicer.slice_model(
+        model,
+        work_dir / "cube.gcode.3mf",
+        overrides={"wall_loops": "2", "inner_wall_speed": "300"},
+    )
+
+    assert result["ok"] is True, result
+    # inner_wall_speed was ["300", "600", "600"], so filling it with "300" changes it.
+    assert run.json["process"][slicer.CHANGED_KEYS_RECORD] == ["inner_wall_speed"]
+
+
+def test_project_may_record_more_keys_than_were_overridden(studio, work_dir, model, fake):
+    # The CLI itself adds keys such as enable_prime_tower to the process entry.
+    fake(archive_kwargs={"project_settings": {
+        "different_settings_to_system": ["enable_prime_tower;wall_loops", "", ""],
+    }})
+    result = slicer.slice_model(model, work_dir / "cube.gcode.3mf", overrides={"wall_loops": "4"})
+    assert result["ok"] is True, result
+
+
+@pytest.mark.parametrize("record", ["empty", "missing"])
+def test_slice_whose_project_drops_the_overrides_is_refused(studio, work_dir, model, fake, record):
+    # Opened in the window, such a file would fall back to the plain system preset.
+    run = fake(record=record)
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(
+        model, out, overrides={"wall_loops": "4", "sparse_infill_density": "30%"}
+    )
+
+    _assert_nothing_published(result, out, run)
+    assert "sparse_infill_density, wall_loops" in result["error_string"]
+    assert "Bambu Studio window" in result["error_string"]
+    assert result["summary"]["path"] is None
+
+
+@pytest.mark.parametrize(
+    "project_settings",
+    [
+        {"different_settings_to_system": []},
+        {"different_settings_to_system": "wall_loops"},
+        {"different_settings_to_system": [4, "", ""]},
+        ["not", "an", "object"],
+    ],
+)
+def test_malformed_project_record_is_refused(studio, work_dir, model, fake, project_settings):
+    run = fake(archive_kwargs={"project_settings": project_settings})
+    out = work_dir / "cube.gcode.3mf"
+    result = slicer.slice_model(model, out, overrides={"wall_loops": "4"})
+    _assert_nothing_published(result, out, run)
+    assert "wall_loops" in result["error_string"]
+
+
+def test_project_record_is_not_checked_without_overrides(studio, work_dir, model, fake):
+    fake(record="missing")
+    result = slicer.slice_model(model, work_dir / "cube.gcode.3mf")
+    assert result["ok"] is True, result
 
 
 # --- vendor index ---------------------------------------------------------------

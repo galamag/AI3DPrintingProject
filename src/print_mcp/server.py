@@ -85,7 +85,9 @@ async def slice_model(
     `overrides` changes process settings for this slice only, e.g.
     {"sparse_infill_density": "30%"}. Every key must exist in the process profile.
     G-code, post-processing, file-name, temperature, compatibility and extruder-variant
-    keys cannot be overridden.
+    keys cannot be overridden. The file lists the changed keys as modified, so the Bambu
+    Studio window opens it with the process preset marked modified and these values; a
+    slice whose file does not list them is refused.
 
     Returns JSON: `ok`, `exit_code`, `error_string`, `output`, `result` (the CLI's
     result.json), `mismatches` (requested profile or bed settings the G-code does not
