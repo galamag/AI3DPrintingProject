@@ -203,7 +203,8 @@ Spec, then plan with tasks, then a `feat/...` branch. Each task goes to a subage
 
 ## Vault
 
-- The project Obsidian vault is the directory listed in `permissions.additionalDirectories` in `.claude/settings.local.json`.
+- The project Obsidian vault is the first directory listed in `permissions.additionalDirectories` in `.claude/settings.local.json`. The second one is the old vault from the BlenderMCP days.
+- Vault writes go through the `documenter` agent (Sonnet), not the main session: the user asked for this on 2026-11-14 to save the expensive model. Give it the facts, their sources and the user's words; it finds the note and writes the entry. The main session may still read the vault.
 - Record every decision in `Журнал решений`: date, decision, reason.
 - Add new questions to `Открытые вопросы`, and move closed ones to the decision log.
 - Record verified Blender facts in `Справочник Blender API` with their source.
