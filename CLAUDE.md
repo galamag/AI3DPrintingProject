@@ -7,7 +7,7 @@ Two MCP servers live in this repository:
 - `blender`: a fork of [mcp-for-blender](https://github.com/ahujasid/blender-mcp) (MIT) with our own tools and agents, so Claude can model, shade and animate in Blender 5.2 from a reference image, a drawing, or an idea. The project started as this fork under the name BlenderMCP; the working folder and some notes still carry that name.
 - `print`: our own package `src/print_mcp`, which slices through the Bambu Studio command line and sees and clicks the Bambu Studio window in the background.
 
-**Reached so far:** Hornet from Hollow Knight: Silksong, modelled, lit and animated, accepted by the user on 2026-11-02 (`designs/hornet/`). A 20 mm test cube printed on 2026-11-12, started by Claude through the Bambu Studio window with foreground clicks, before the background tools existed. **Current goal:** one single-colour part goes from Blender to a finished print with the user only answering questions. FreeCAD and multi-colour prints come later.
+**Reached so far:** Hornet from Hollow Knight: Silksong, modelled, lit and animated, accepted by the user on 2026-11-02 (`designs/hornet/`). A 20 mm test cube printed on 2026-11-12, started by Claude through the Bambu Studio window with foreground clicks, before the background tools existed. The first real order, a two-colour `$AIBAT$` name money box in two halves (`designs/aibat-bank/`), printed on 2026-11-13 and 2026-11-14 through the whole pipeline. **Current goal:** one single-colour part goes from Blender to a finished print with the user only answering questions. FreeCAD and multi-colour prints come later.
 
 Current status lives in the vault note `План разработки`, not in this file.
 
@@ -101,7 +101,8 @@ Full history: the `Журнал решений` note in the vault. Open question
 - The `Auto-Start Server` checkbox is a scene property, so a file saved with it off starts no server when opened.
 - When port 9876 is already taken, for example by a second Blender, auto-start is skipped with only a console message.
 - Closing Blender with unsaved changes opens a dialog that waits for a person. `scripts\restart-blender.ps1` asks `bpy.data.is_dirty` over the socket and refuses to close while it is true.
-- Blender comes from Steam, which can update it between sessions. Check the version with `get_addon_status` at the start of a session.
+- Blender comes from Steam, which can update it between sessions. Check the version with `get_addon_status` at the start of a session. After an update the addon is still in the old version's folder and no socket answers: `scripts\restart-blender.ps1` installs it into the newest folder, but it cannot check a Blender without the addon, so ask the user to close Blender by hand first.
+- On Blender 5.3.0 the `MANIFOLD` boolean solver gave imprecise results on the money box; `EXACT` worked. Meshes converted from text have duplicate vertices and need a weld (`remove_doubles`) before booleans and before `export_for_print`.
 
 ## Bambu Studio traps
 
@@ -115,12 +116,26 @@ Full history: the `Журнал решений` note in the vault. Open question
 - Buttons are drawn by the program itself. Their positions depend on window size and version, so never keep coordinates in code or instructions.
 - The camera view on the `Устройство` (Device) tab may be paused (seen on 2026-11-12 after the printer sat idle); its play button gives a fresh frame.
 - An image captured by a subagent stays with the subagent; only its text report comes back. To see a window, the main session captures it itself.
-- Not verified in the background yet: `Печатать пластину` (Print plate), the send dialog, a minimized window, display scaling other than 100 %, and whether a window started by `studio_open` covers the user's windows.
+- Verified in the background on 2026-11-13: `Печатать пластину` (Print plate), the send dialog and `Отправить`. The send dialog does become the foreground window. Not verified: a minimized window and display scaling other than 100 %.
+- On opening a project the window resets every process setting that is not listed in the project's `different_settings_to_system`. `slice_model` writes its overrides there and refuses a slice whose project lacks them (commit `64e3429`). An MCP server started before a code change still runs the old code, so reconnect it through `/mcp` or start a new session. Before sending, compare the window's filament weight with the command-line slice: a lost override shows there, the time barely changes.
+- A start of Bambu Studio may show a modal `Обновление конфигурации` (Configuration update) dialog first; press `Отмена` (Cancel), an update can change the profiles.
+- The four pale rectangle outlines in the middle of the textured plate are the Bambu logo printed on the plate, not residue.
+- Plate thumbnails show the project's display colour, not the spool. The real colour is the AMS slot chosen in the send dialog.
+- The `studio_*` tools cannot see windows under 200 px tall (the `Сохранить?` save prompt) or popup lists, and cannot right-click, drag or type. Numeric fields have spinner arrows that a background click can press.
+- A colour change by layer therefore needs the real mouse, and so the user's consent to hand over the screen for that step: add a second filament with `+` under `Филаменты проекта` (Project filaments), slice, drag the layer slider to the layer, right-click its thumb, `Сменить филамент` (Change filament), `Филамент 2`, then slice again. In the send dialog the second filament maps to a slot on its own (it chose white for a black body); set the slot by hand and check its colour.
+
+## Print lessons
+
+From the `$AIBAT$` money box; details in the vault decision log, 2026-11-13 and 2026-11-14.
+
+- A large flat face printed on supports lifts at its edge as the solid layers above it shrink, and the nozzle smears the raised edge. Wider supports and more interface layers did not help. What does help is not known yet; discuss it with the user before the next part of this kind.
+- Supports and raised details under a body of another colour: switch to the body colour two layers before the body starts, so the body's first layer is not stained.
+- A joint test coupon shows fit, not holding force. Ridges on a lip give a fit, not a lock: the finished halves closed without play at a 0.15 mm gap and still opened under their own weight. A heavy part that must open again needs catches with a hook, and the test joint must be loaded with the weight of the finished part.
 
 ## Environment
 
-- Blender 5.2.3 LTS, installed by Steam: `D:\SteamLibrary\steamapps\common\Blender\blender.exe`. Starting the executable directly works without Steam. Its bundled Python is 3.13 and includes `requests`, which the addon needs.
-- Blender user folder: `%APPDATA%\Blender Foundation\Blender\5.2`. Legacy addons go to `scripts\addons` inside it, which the restart script creates.
+- Blender 5.3.0 since 2026-11-13 (a Steam update from 5.2.3 LTS): `D:\SteamLibrary\steamapps\common\Blender\blender.exe`. Starting the executable directly works without Steam. Its bundled Python is 3.13 and includes `requests`, which the addon needs.
+- Blender user folder: `%APPDATA%\Blender Foundation\Blender\5.3`. Legacy addons go to `scripts\addons` inside it, which the restart script creates.
 - Python 3.13 and uv 0.11 are on `PATH`. `.python-version` pins 3.11 for the server, which uv downloads on the first `uv sync`.
 - Working files, that is `.blend` files and renders, live in `%USERPROFILE%\Documents\BlenderMCP`. References and briefs live in `designs/<slug>/`, print files in `designs/<slug>/print/`. Model, output and picture paths given to the print tools and to `export_for_print` must lie under the repository or that folder. `PRINT_MCP_WORK_DIR` adds one more folder; it is unset, and renaming the working folder is an open question.
 - Bambu Studio 02.09.01.70: `C:\Program Files\Bambu Studio\bambu-studio.exe`, system profiles in `resources\profiles\BBL`. `BAMBU_STUDIO_DIR` overrides the folder. The interface is in Russian. An update can move buttons and change profiles, so check the version when something looks different: `(Get-Item 'C:\Program Files\Bambu Studio\bambu-studio.exe').VersionInfo.FileVersion`.
