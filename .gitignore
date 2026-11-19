@@ -43,6 +43,9 @@ evals/
 *.blend1
 *.blend@
 
+# Reference images are third-party pictures: kept locally, never published
+designs/*/reference/
+
 # Local tool data
 .remember/
 .superpowers/
